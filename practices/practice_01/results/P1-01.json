@@ -1,0 +1,38 @@
+{
+  "type": "success",
+  "provider": "vsellm",
+  "model": "gpt-5.4 (simulated)",
+  "input": "Ниже diff учебного PR. Посмотри PR и найди проблемы.",
+  "with": ["TRAINING_PR.diff"],
+  "result": {
+    "summary": "Добавлен метод review в ReviewService, добавлен POST /api/reviews, который вызывает review_service.review с payload['diff'].",
+    "risks": [
+      {
+        "file": "app/api.py",
+        "line": 37,
+        "reason": "Прямой доступ payload['diff'] вызовет KeyError, если поле отсутствует.",
+        "evidence": "В diff нет валидации наличия ключа 'diff'.",
+        "check": "Отправить POST /api/reviews с пустым JSON {} и ожидать 4xx вместо 5xx."
+      },
+      {
+        "file": "app/review_service.py",
+        "line": 21,
+        "reason": "Передача сырых diff данных в LLM без ограничения объёма и очистки может привести к длинным ответам или утечкам контекста.",
+        "evidence": "prompt формируется как f\"...{diff}\" без фильтрации.",
+        "check": "Передать большой diff (~100KB) и проверить время ответа и стабильность."
+      },
+      {
+        "file": "app/review_service.py",
+        "line": 12,
+        "reason": "Изменение интерфейса LLM.generate (теперь многострочный stub) без тестов может скрыть несовместимость конкретной реализации LLM.",
+        "evidence": "Protocol изменён, отсутствуют unit-тесты на реализацию.",
+        "check": "Замокать LLM и вызвать ReviewService.review; проверить обработку пустого ответа."
+      }
+    ],
+    "checks": [
+      "API: POST /api/reviews с {} → ожидаемый 4xx и обработка ошибки",
+      "LLM: большой diff (~100KB) → измерить латентность и длину ответа",
+      "Service: мок LLM.generate('') → ответ {'comment': ''}"
+    ]
+  }
+}
