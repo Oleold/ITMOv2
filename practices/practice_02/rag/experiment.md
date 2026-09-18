@@ -9,8 +9,6 @@
 
 | Файл или документ | Зачем нужен | Какой фрагмент используем |
 |---|---|---|
-| Файл или документ | Зачем нужен | Какой фрагмент используем |
-|---|---|---|
 | `practices/practice_01/TRAINING_PR.diff` | Источник правды о текущем коде | app/api.py: POST /api/reviews и обращение к `payload["diff"]`; app/review_service.py: метод `review()` и возвращаемый dict с `comment` |
 | `practices/practice_01/README.md` | Документация кейса и ожидания по входам | Разделы про вход `TRAINING_PR.diff` и ограничения «только diff», упоминание KeyError и проверок 4xx |
 
