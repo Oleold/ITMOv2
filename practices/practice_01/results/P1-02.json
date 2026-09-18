@@ -1,0 +1,32 @@
+{
+  "type": "success",
+  "provider": "vsellm",
+  "model": "gpt-5.4 (simulated)",
+  "input": "TRAINING_PR.diff + Master Prompt v1",
+  "result": {
+    "summary": "Изменения: добавлен метод review в ReviewService и endpoint POST /api/reviews, делегирующий вызов сервису.",
+    "risks": [
+      {
+        "file": "app/api.py",
+        "line": 37,
+        "reason": "payload['diff'] может вызвать KeyError при отсутствии ключа; отсутствует валидация входа.",
+        "evidence": "В diff нет проверки 'diff' in payload и схемы запроса.",
+        "repro": "HTTP: POST /api/reviews с телом {} → ожидать 422/400, не 500",
+        "severity": "high"
+      },
+      {
+        "file": "app/review_service.py",
+        "line": 20,
+        "reason": "Неопределён формат prompt и ограничение размера diff → риск избыточного ответа LLM.",
+        "evidence": "prompt включает весь diff без тримминга/инструкций.",
+        "repro": "Передать diff ~100KB и измерить время/длину ответа",
+        "severity": "medium"
+      }
+    ],
+    "checks": [
+      "API негативный: POST /api/reviews с {} → 4xx и стабильность",
+      "Нагрузка: diff 100KB → латентность <5с, без ошибок",
+      "Сервис: мок LLM.generate → пустой ответ обрабатывается"
+    ]
+  }
+}
