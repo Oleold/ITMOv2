@@ -1,13 +1,13 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "ollama/itmo-agent",
-  "small_model": "ollama/itmo-agent",
+  "model": "ollama/qwen2.5:7b",
+  "small_model": "ollama/qwen2.5:7b",
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama local",
       "options": {
-        "baseURL": "http://localhost:11434/v1"
+          "baseURL": "http://localhost:11434/v1"
       },
       "models": {
         "itmo-agent": {
@@ -16,9 +16,20 @@
             "context": 65536,
             "output": 4096
           }
+        },
+        "qwen2.5:7b": {
+          "name": "Qwen2.5 7B local",
+          "limit": {
+            "context": 32768,
+            "output": 2048
+          }
         }
       }
     }
+  },
+  "tool_output": {
+    "max_lines": 800,
+    "max_bytes": 131072
   },
   "agent": {
     "local-guide": {
@@ -35,4 +46,3 @@
     }
   }
 }
-
