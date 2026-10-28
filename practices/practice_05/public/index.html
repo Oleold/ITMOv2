@@ -49,7 +49,10 @@
           <button type="button" id="next">Вперед</button>
         </div>
 
-        <button type="button" id="reset">Сброс</button>
+        <div class="row">
+          <button type="button" id="reset">Сброс</button>
+          <button type="button" id="export">Скачать JSON</button>
+        </div>
       </form>
 
       <div class="muted" id="pageInfo" style="margin-top:8px;">Страница 1 из 1</div>
@@ -187,6 +190,20 @@
         fetchItems();
       });
 
+      // Clear-on-Escape behavior: when focused on the query input, pressing Esc clears value and resets filters
+      $('query').addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.key === 'Esc') {
+          const inp = e.target;
+          const val = typeof inp.value === 'string' ? inp.value : '';
+          if (val.trim().length > 0) {
+            e.preventDefault();
+            // Ensure we clear the visible input and run existing reset logic
+            inp.value = '';
+            resetFilters();
+          }
+        }
+      });
+
       $('status').addEventListener('change', (e) => {
         state.page = 1; // reset pagination on filter change
         state.status = e.target.value;
@@ -205,11 +222,63 @@
         fetchItems();
       });
 
-      $('reset').addEventListener('click', resetFilters);
-      $('emptyReset').addEventListener('click', resetFilters);
+       $('reset').addEventListener('click', resetFilters);
+       $('emptyReset').addEventListener('click', resetFilters);
 
-      // Initial fetch
-      fetchItems();
-    </script>
+       // Export JSON: fetch /api/export with current filters and download as export.json
+       $('export').addEventListener('click', async () => {
+         const btn = $('export');
+         btn.disabled = true;
+         try {
+           // Build query params using current filters (query/status)
+           const params = new URLSearchParams();
+           const q = state.query.trim();
+           if (q.length >= 2) params.set('query', q);
+           if (state.status) params.set('status', state.status);
+
+           // Hide previous error banner
+           $('apiError').style.display = 'none';
+           $('apiError').textContent = '';
+
+           const res = await fetch(`/api/export?${params.toString()}`);
+
+           if (res.status === 400) {
+             let msg = 'Некорректные параметры запроса';
+             try {
+               const body = await res.json();
+               if (body && body.message) msg = body.message;
+             } catch {}
+             $('apiError').textContent = `Ошибка: ${msg}`;
+             $('apiError').style.display = 'block';
+             return;
+           }
+
+           if (!res.ok) {
+             $('apiError').textContent = 'Ошибка экспорта';
+             $('apiError').style.display = 'block';
+             return;
+           }
+
+           const text = await res.text();
+           const blob = new Blob([text], { type: 'application/json' });
+           const url = URL.createObjectURL(blob);
+           const a = document.createElement('a');
+           a.href = url;
+           a.download = 'export.json';
+           document.body.appendChild(a);
+           a.click();
+           URL.revokeObjectURL(url);
+           a.remove();
+         } catch (e) {
+           $('apiError').textContent = 'Ошибка сети';
+           $('apiError').style.display = 'block';
+         } finally {
+           btn.disabled = false;
+         }
+       });
+
+       // Initial fetch
+       fetchItems();
+      </script>
   </body>
   </html>

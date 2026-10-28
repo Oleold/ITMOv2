@@ -136,6 +136,44 @@ function validateParams(q) {
   return errors;
 }
 
+// Validation for export endpoint: reuse existing rules for query and status only
+function validateExportParams(q) {
+  // Reuse validateParams but ignore page/limit by passing only needed fields
+  return validateParams({ query: q.query, status: q.status });
+}
+
+function handleApiExport(req, res, queryParams) {
+  try {
+    const errors = validateExportParams(queryParams);
+    if (errors.length > 0) {
+      // Spec requires simple error object { error: string }
+      return sendJSON(res, 400, { error: errors[0].message || 'Некорректные параметры запроса' });
+    }
+
+    const queryRaw = typeof queryParams.query === 'string' ? queryParams.query.trim() : '';
+    const hasQuery = queryRaw.length >= 2; // empty treated as no filter
+    const status = typeof queryParams.status === 'string' ? queryParams.status : undefined;
+
+    // Filter using the same logic as /api/items
+    let list = DATA;
+    if (hasQuery) {
+      const qLower = queryRaw.toLocaleLowerCase();
+      list = list.filter((item) => item.title.toLocaleLowerCase().includes(qLower));
+    }
+    if (status) {
+      list = list.filter((item) => item.status === status);
+    }
+
+    // Map to export shape: { id, title, status }
+    const result = list.map((item) => ({ id: item.id, title: item.title, status: item.status }));
+
+    return sendJSON(res, 200, result);
+  } catch (err) {
+    // Spec requires simple error object for 500 as well
+    return sendJSON(res, 500, { error: 'Unexpected server error' });
+  }
+}
+
 function handleApiItems(req, res, queryParams) {
   const errors = validateParams(queryParams);
   if (errors.length > 0) {
@@ -194,6 +232,10 @@ function createServer() {
 
       if (method === 'GET' && pathname === '/api/items') {
         return handleApiItems(req, res, parsed.query || {});
+      }
+
+      if (method === 'GET' && pathname === '/api/export') {
+        return handleApiExport(req, res, parsed.query || {});
       }
 
       // 404 fallback
