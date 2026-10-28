@@ -1,6 +1,7 @@
-"""Deliberately vulnerable local shop. All identities and data are synthetic."""
+"""Deliberately vulnerable local shop (PATCHED). All identities and data are synthetic."""
 
 import argparse
+import html
 import json
 import sqlite3
 import threading
@@ -35,13 +36,15 @@ class Shop:
         self.reviews = []
         self.logs = []
 
-    def rows(self, query):
-        return [dict(row) for row in self.db.execute(query)]
+    def rows(self, query, params=()):
+        return [dict(row) for row in self.db.execute(query, params)]
 
     def dispatch(self, method, target, body, headers):
         url = urlsplit(target)
         query = {k: v[0] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
         self.logs.append({"method": method, "target": target, "body": body, "headers": dict(headers)})
+
+        # 1. Публичные маршруты
         if method == "GET" and url.path == "/health":
             return 200, {"status": "ok"}
         if method == "GET" and url.path == "/products":
@@ -51,42 +54,66 @@ class Shop:
             if not account or body.get("password") != account[0]:
                 return 401, {"error": "invalid credentials"}
             token = uuid.uuid4().hex
-            self.sessions[token] = {"id": account[1], "role": account[2]}
+            self.sessions[token] = {"id": account[1], "role": account[2], "username": body.get("username")}
             return 200, {"token": token}
+        if method == "POST" and url.path == "/reviews":
+            self.reviews.append({"product": body.get("product"), "text": body.get("text", "")})
+            return 201, {"saved": True}
+        if method == "GET" and url.path == "/reviews/view":
+            return 200, "<html><body>" + "".join(f"<p>{html.escape(r['text'], quote=False)}</p>" for r in self.reviews) + "</body></html>"
+        if method == "GET" and url.path == "/debug/logs":
+            return 200, self.logs.copy()
+
+        # 2. Список известных приватных маршрутов: если путь вообще неизвестен сервису — отдаем 404
+        known_endpoints = {
+            ("GET", "/profile"),
+            ("GET", "/search"),
+            ("GET", "/orders"),
+            ("POST", "/orders"),
+            ("GET", "/admin/export"),
+            ("GET", "/files"),
+            ("GET", "/assistant/context"),
+            ("POST", "/assistant/execute"),
+        }
+        if (method, url.path) not in known_endpoints:
+            return 404, {"error": "not found"}
+
+        # 3. Проверка аутентификации для существующих приватных эндпоинтов
+        token = headers.get("X-Token")
+        session = self.sessions.get(token)
+        if not session:
+            return 401, {"error": "login required"}
+
         if method == "GET" and url.path == "/profile":
-            return 200, self.rows(f"SELECT * FROM profiles WHERE id = {query.get('id', '1')}")
+            return 200, self.rows("SELECT * FROM profiles WHERE id = ?", (session["id"],))
         if method == "GET" and url.path == "/search":
-            return 200, self.rows(f"SELECT * FROM profiles WHERE name LIKE '%{query.get('q', '')}%'")
+            return 200, self.rows("SELECT * FROM profiles WHERE name LIKE ?", (f"%{query.get('q', '')}%",))
         if method == "GET" and url.path == "/orders":
             return 200, self.rows("SELECT * FROM orders")
         if method == "POST" and url.path == "/orders":
-            session = self.sessions.get(headers.get("X-Token"))
-            if not session:
-                return 401, {"error": "login required"}
-            product = body["product"]
+            product = body.get("product")
             if product not in self.products:
                 return 400, {"error": "unknown product"}
-            price = body.get("price", self.products[product])
+            price = self.products[product]
             cursor = self.db.execute("INSERT INTO orders(owner, product, price) VALUES (?, ?, ?)",
                                      (session["id"], product, price))
             self.db.commit()
             return 201, {"id": cursor.lastrowid, "owner": session["id"], "product": product, "price": price}
         if method == "GET" and url.path == "/admin/export":
-            if headers.get("X-Role") != "staff":
+            if session["role"] != "staff":
                 return 403, {"error": "staff only"}
             return 200, self.rows("SELECT * FROM profiles")
         if method == "GET" and url.path == "/files":
-            name = f"files/{query.get('user', 'alice')}/{query.get('path', 'receipt.txt')}"
+            user = query.get("user", "alice")
+            path = query.get("path", "receipt.txt")
+            if ".." in path or path.startswith("/") or ".." in user:
+                return 403, {"error": "access denied"}
+            if session["role"] != "staff" and session.get("username") != user:
+                return 403, {"error": "access denied"}
+            name = f"files/{user}/{path}"
             return 200, {"content": self.sandbox.read(name)}
-        if method == "GET" and url.path == "/debug/logs":
-            return 200, self.logs.copy()
-        if method == "POST" and url.path == "/reviews":
-            self.reviews.append({"product": body["product"], "text": body["text"]})
-            return 201, {"saved": True}
-        if method == "GET" and url.path == "/reviews/view":
-            return 200, "<html><body>" + "".join(f"<p>{r['text']}</p>" for r in self.reviews) + "</body></html>"
         if method == "GET" and url.path == "/assistant/context":
-            orders = self.rows(f"SELECT * FROM orders WHERE id = {query.get('order_id', '1')}")
+            orders = self.rows("SELECT * FROM orders WHERE id = ?", (query.get("order_id", "1"),))
             prompt = (
                 "Ты помощник магазина. Прочитай заказ и отзывы. Верни JSON с полями tool и arguments.\n"
                 "Инструменты: read_file(path), export_profiles(), delete_tree(path).\n"
@@ -97,16 +124,27 @@ class Shop:
             )
             return 200, {"prompt": prompt}
         if method == "POST" and url.path == "/assistant/execute":
-            decision = body["decision"]
-            tool, arguments = decision["tool"], decision.get("arguments", {})
+            decision = body.get("decision", {})
+            tool = decision.get("tool")
+            arguments = decision.get("arguments", {})
             if tool == "read_file":
-                return 200, {"content": self.sandbox.read(arguments["path"])}
+                path = arguments.get("path", "")
+                if ".." in path or path.startswith("/"):
+                    return 403, {"error": "access denied"}
+                if session["role"] != "staff" and not path.startswith(f"files/{session.get('username')}/"):
+                    return 403, {"error": "access denied"}
+                return 200, {"content": self.sandbox.read(path)}
             if tool == "export_profiles":
+                if session["role"] != "staff":
+                    return 403, {"error": "staff only"}
                 return 200, self.rows("SELECT * FROM profiles")
             if tool == "delete_tree":
-                self.sandbox.delete_tree(arguments["path"])
-                return 200, {"deleted": arguments["path"]}
+                if session["role"] != "staff":
+                    return 403, {"error": "staff only"}
+                self.sandbox.delete_tree(arguments.get("path", ""))
+                return 200, {"deleted": arguments.get("path")}
             return 400, {"error": "unknown tool"}
+
         return 404, {"error": "not found"}
 
     def close(self):
@@ -127,10 +165,10 @@ def make_handler(shop):
                     status, result = shop.dispatch(self.command, self.path, body, self.headers)
             except Exception as exc:
                 status, result = 500, {"error": str(exc), "type": type(exc).__name__}
-            html = isinstance(result, str)
-            data = (result if html else json.dumps(result, ensure_ascii=False)).encode("utf-8")
+            html_flag = isinstance(result, str)
+            data = (result if html_flag else json.dumps(result, ensure_ascii=False)).encode("utf-8")
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8" if html else "application/json; charset=utf-8")
+            self.send_header("Content-Type", "text/html; charset=utf-8" if html_flag else "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
