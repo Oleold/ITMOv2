@@ -32,11 +32,12 @@ class ShopTest(unittest.TestCase):
     def test_tokens_identify_distinct_users(self):
         alice, bob = self.login(), self.login("bob", "learn-bob")
         self.assertNotEqual(alice, bob)
+        # Profile endpoint now ignores provided id and returns own profile
         self.assertEqual(self.request("GET", "/profile?id=1", headers=alice)[1][0]["name"], "TEST_ALICE")
         self.assertEqual(self.request("GET", "/profile?id=2", headers=bob)[1][0]["name"], "TEST_BOB")
 
     def test_staff_can_export_with_staff_session(self):
-        auth = {**self.login("staff", "learn-staff"), "X-Role": "staff"}
+        auth = {**self.login("staff", "learn-staff")}
         status, profiles = self.request("GET", "/admin/export", headers=auth)
         self.assertEqual(status, 200)
         self.assertEqual(len(profiles), 2)
@@ -73,6 +74,67 @@ class ShopTest(unittest.TestCase):
         }, auth)
         self.assertEqual(status, 200)
         self.assertIn("TEST_ALICE", result["content"])
+
+    # New security regression tests
+    def test_xss_escaped(self):
+        auth = self.login()
+        payload = "<script>alert('x')</script>"
+        self.assertEqual(self.request("POST", "/reviews", {"product": "chair", "text": payload}, auth)[0], 201)
+        status, html = self.request("GET", "/reviews/view", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertIn("&lt;script&gt;alert('x')&lt;/script&gt;", html)
+
+    def test_sqli_prevented(self):
+        auth = self.login()
+        # profile ignores id and uses session, so trying SQLi in id should not change behavior
+        status, rows = self.request("GET", "/profile?id=1 OR 1=1", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], 1)
+        # search is parameterized; ensure it still works and doesn't error on quotes
+        status, rows = self.request("GET", "/search?q=' OR '1'='1", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertIsInstance(rows, list)
+
+    def test_path_traversal_prevented(self):
+        auth = self.login()
+        # Cannot read outside own folder
+        status, _ = self.request("GET", "/files?user=bob&path=receipt.txt", headers=auth)
+        self.assertEqual(status, 403)
+        # Cannot escape to private via traversal
+        status, _ = self.request("GET", "/files?user=alice&path=../../private/operator-note.txt", headers=auth)
+        self.assertEqual(status, 403)
+
+    def test_mass_assignment_prevented(self):
+        auth = self.login()
+        status, order = self.request("POST", "/orders", {"product": "chair", "price": 1}, auth)
+        self.assertEqual(status, 201)
+        self.assertEqual(order["price"], 5000)
+
+    def test_llm_tools_auth_prevented(self):
+        # Customer cannot export profiles or delete trees; can read only own files
+        auth = self.login()
+        status, res = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "export_profiles"}
+        }, auth)
+        self.assertEqual(status, 403)
+
+        status, res = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "delete_tree", "arguments": {"path": "files/alice"}}
+        }, auth)
+        self.assertEqual(status, 403)
+
+        # Read own file allowed; reading other's file denied
+        status, res = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "read_file", "arguments": {"path": "files/alice/receipt.txt"}}
+        }, auth)
+        self.assertEqual(status, 200)
+        self.assertIn("TEST_ALICE", res["content"])
+
+        status, res = self.request("POST", "/assistant/execute", {
+            "decision": {"tool": "read_file", "arguments": {"path": "files/bob/receipt.txt"}}
+        }, auth)
+        self.assertEqual(status, 403)
 
 
 class SandboxTest(unittest.TestCase):
