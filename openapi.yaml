@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info:
+  title: Practice 05 Export API
+  version: 1.0.0
+paths:
+  /api/export:
+    get:
+      summary: Экспорт отфильтрованных данных
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, active, inactive]
+      responses:
+        '200':
+          description: Успешная выгрузка данных
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    title:
+                      type: string
+                    status:
+                      type: string
+        '400':
+          description: Ошибка валидации параметров
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string

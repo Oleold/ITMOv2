@@ -1,0 +1,215 @@
+openapi: 3.1.0
+info:
+  title: Поиск и фильтрация элементов
+  version: 1.0.0
+  summary: Согласованная спецификация логики (Design-First)
+  description: |
+    Согласованная спецификация для фичи «Поиск и фильтрация элементов списка по ключевому слову и статусу».
+
+    Структура сущности Item:
+    - id: UUID (string, format: uuid)
+    - title: строка заголовка
+    - description: опциональное текстовое описание (nullable)
+    - status: один из [active, archived, draft]
+    - createdAt: дата и время создания (ISO 8601, format: date-time)
+
+    Бизнес-правила:
+    - Поиск по ключевому слову выполняется по подстроке поля `title`, регистронезависимо (case-insensitive).
+    - Допустимые значения статуса: `active`, `archived`, `draft`.
+    - Пагинация: `page` >= 1 (по умолчанию 1); `limit` >= 1, по умолчанию 20, максимум 100.
+servers:
+  - url: /
+
+x-business-rules:
+  search:
+    field: title
+    mode: substring
+    caseInsensitive: true
+  statuses:
+    - active
+    - archived
+    - draft
+  pagination:
+    minPage: 1
+    defaultLimit: 20
+    maxLimit: 100
+
+paths:
+  /api/items:
+    get:
+      tags:
+        - Items
+      summary: Список элементов с поиском и фильтрацией
+      description: |
+        Возвращает список элементов (Item) с поддержкой регистронезависимого поиска по подстроке поля `title` и фильтрации по статусу.
+        Пагинация обязательна, параметры `page` и `limit` управляют размером и номером страницы.
+      parameters:
+        - name: query
+          in: query
+          description: |
+            Ключевое слово для поиска по подстроке поля `title` (регистронезависимо).
+            Если не задан, возвращаются элементы без фильтра по ключевому слову.
+          required: false
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 200
+        - name: status
+          in: query
+          description: Фильтрация по статусу элемента. Допустимые значения: active, archived, draft.
+          required: false
+          schema:
+            type: string
+            enum: [active, archived, draft]
+        - name: page
+          in: query
+          description: Номер страницы (начиная с 1). Значение меньше 1 приводит к ошибке 400.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Размер страницы. Минимум 1, по умолчанию 20, максимум 100. Превышение лимита приводит к ошибке 400.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Успешный ответ со списком элементов и метаданными пагинации.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsPage'
+              examples:
+                success:
+                  summary: Пример успешного ответа
+                  value:
+                    data:
+                      - id: "5f1d7b3e-9c2b-4b0e-9c08-2b4f64f2f111"
+                        title: "Первый элемент"
+                        description: null
+                        status: "active"
+                        createdAt: "2026-01-15T10:20:30Z"
+                      - id: "a1b2c3d4-0000-1111-2222-333344445555"
+                        title: "Черновик заметки"
+                        description: "Описание черновика"
+                        status: "draft"
+                        createdAt: "2026-02-01T08:00:00Z"
+                    meta:
+                      page: 1
+                      limit: 20
+                      total: 42
+                      totalPages: 3
+        '400':
+          description: Неверные параметры запроса (валидационная ошибка).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidLimit:
+                  summary: Превышен максимальный лимит
+                  value:
+                    code: "VALIDATION_ERROR"
+                    message: "Parameter 'limit' must be between 1 and 100"
+                    details:
+                      - field: "limit"
+                        message: "max 100"
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                serverError:
+                  summary: Общая ошибка сервера
+                  value:
+                    code: "INTERNAL_ERROR"
+                    message: "Unexpected server error"
+
+components:
+  schemas:
+    Item:
+      type: object
+      additionalProperties: false
+      required: [id, title, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Уникальный идентификатор элемента (UUID).
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Заголовок элемента.
+        description:
+          type: string
+          nullable: true
+          description: Опциональное описание элемента.
+        status:
+          type: string
+          enum: [active, archived, draft]
+          description: Статус элемента.
+        createdAt:
+          type: string
+          format: date-time
+          description: Время создания в формате ISO 8601 (UTC рекомендовано).
+
+    ItemsPage:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+        meta:
+          type: object
+          additionalProperties: false
+          required: [page, limit, total, totalPages]
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+            total:
+              type: integer
+              minimum: 0
+            totalPages:
+              type: integer
+              minimum: 0
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Код ошибки. Для ошибок валидации — VALIDATION_ERROR.
+        message:
+          type: string
+          description: Человекочитаемое описание ошибки.
+        details:
+          type: array
+          description: Детализация ошибок валидации по полям.
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string

@@ -1,0 +1,119 @@
+openapi: 3.1.0
+info:
+  title: Экспорт элементов
+  version: 1.0.0
+  summary: Версия ПОСЛЕ согласования (Frontend ↔ Backend)
+  description: |
+    Финальная спецификация API экспорта. Эндпоинт отдает JSON-массив элементов
+    без пагинации. Поддерживаются фильтры по подстроке `title` и по `status`.
+
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: /
+
+paths:
+  /api/export:
+    get:
+      tags:
+        - Export
+      summary: Экспорт списка элементов (JSON)
+      description: |
+        Возвращает массив элементов с учетом фильтрации. Без пагинации.
+        Поиск по `query` выполняется регистронезависимо по подстроке `title`.
+      parameters:
+        - name: query
+          in: query
+          required: false
+          description: |
+            Поисковая строка (подстрока по `title`, регистронезависимо).
+            Допустимы буквы, цифры и пробелы. Длина 2..200. Пустая строка трактуется как отсутствие фильтра.
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 200
+            pattern: '^[\p{L}\p{Nd} ]+$'
+            x-regexpFlags: 'u'
+        - name: status
+          in: query
+          required: false
+          description: Фильтрация по статусу элемента.
+          schema:
+            type: string
+            enum: [active, archived, draft]
+      responses:
+        '200':
+          description: Успешный ответ — массив экспортируемых элементов.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExportItem'
+              examples:
+                ok:
+                  summary: Пример массива элементов
+                  value:
+                    - id: "5f1d7b3e-9c2b-4b0e-9c08-2b4f64f2f111"
+                      title: "Документ проекта"
+                      status: "active"
+                    - id: "a1b2c3d4-0000-1111-2222-333344445555"
+                      title: "Черновик заметки"
+                      status: "draft"
+        '400':
+          description: Ошибка валидации входных параметров.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleError'
+              examples:
+                invalidQuery:
+                  summary: Недопустимая поисковая строка
+                  value:
+                    error: "Строка поиска должна содержать от 2 символов"
+        '500':
+          description: Внутренняя ошибка сервера.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleError'
+              examples:
+                serverError:
+                  summary: Неожиданная ошибка
+                  value:
+                    error: "Unexpected server error"
+
+components:
+  schemas:
+    ExportItem:
+      type: object
+      additionalProperties: false
+      required: [id, title, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Уникальный идентификатор элемента (UUID).
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Заголовок элемента.
+        status:
+          type: string
+          enum: [active, archived, draft]
+          description: Статус элемента.
+    SimpleError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Человекочитаемое сообщение об ошибке.
+
+x-validation-rules:
+  query:
+    allowedChars: 'Unicode categories L (letters), Nd (digits), and space'
+    length: '2..200 when non-empty; empty => no filter'
+  status:
+    enum: [active, archived, draft]
